@@ -1,0 +1,12 @@
+[package]
+name = "tzoffset-math"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Civil calendar and UTC offset arithmetic, no timezone database required"
+
+[lib]
+name = "tzoffset_math"
+path = "src/lib.rs"
+
+[dependencies]

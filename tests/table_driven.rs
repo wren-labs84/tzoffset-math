@@ -2,7 +2,10 @@
 //! (days_in_month table without century rules, offset math done on
 //! hours alone, sign errors on negative offsets) tends to get wrong.
 
-use tzoffset_math::{days_in_month, is_leap_year, CivilDateTime, Date, Time, UtcOffset};
+use tzoffset_math::{
+    days_in_month, is_leap_year, CivilDateTime, Date, Time, TransitionRule, UtcOffset, Weekday,
+    WeekdayOccurrence,
+};
 
 #[test]
 fn leap_year_edge_cases() {
@@ -144,6 +147,99 @@ fn offset_rejects_mixed_sign_and_out_of_range() {
     assert!(UtcOffset::from_hm(5, 30).is_ok());
     assert!(UtcOffset::from_hm(-5, -30).is_ok());
     assert!(UtcOffset::from_hm(0, 0).is_ok());
+}
+
+#[test]
+fn weekday_matches_known_dates() {
+    let cases: &[((i32, u8, u8), Weekday)] = &[
+        ((1970, 1, 1), Weekday::Thursday), // the epoch itself
+        ((1970, 1, 2), Weekday::Friday),
+        ((1969, 12, 31), Weekday::Wednesday), // the day before the epoch
+        ((2000, 2, 29), Weekday::Tuesday),    // the century leap day
+        ((2023, 3, 5), Weekday::Sunday),
+        ((1900, 1, 1), Weekday::Monday),
+    ];
+    for &((y, m, d), expected) in cases {
+        let date = Date::new(y, m, d).unwrap();
+        assert_eq!(date.weekday(), expected, "{y}-{m:02}-{d:02}");
+    }
+}
+
+#[test]
+fn transition_rule_finds_nth_weekday_of_month() {
+    // US DST since 2007: starts second Sunday in March, ends first
+    // Sunday in November, both at 02:00 local.
+    let starts = TransitionRule::new(
+        3,
+        WeekdayOccurrence::Second,
+        Weekday::Sunday,
+        Time::new(2, 0, 0).unwrap(),
+    )
+    .unwrap();
+    let ends = TransitionRule::new(
+        11,
+        WeekdayOccurrence::First,
+        Weekday::Sunday,
+        Time::new(2, 0, 0).unwrap(),
+    )
+    .unwrap();
+
+    let cases: &[(i32, (i32, u8, u8), (i32, u8, u8))] = &[
+        (2023, (2023, 3, 12), (2023, 11, 5)),
+        (2024, (2024, 3, 10), (2024, 11, 3)),
+        (2007, (2007, 3, 11), (2007, 11, 4)), // first year of the current rule
+    ];
+    for &(year, expected_start, expected_end) in cases {
+        let (sy, sm, sd) = expected_start;
+        let (ey, em, ed) = expected_end;
+        assert_eq!(starts.date_in_year(year), Date::new(sy, sm, sd).unwrap());
+        assert_eq!(ends.date_in_year(year), Date::new(ey, em, ed).unwrap());
+        assert_eq!(
+            starts.datetime_in_year(year),
+            CivilDateTime::new(Date::new(sy, sm, sd).unwrap(), Time::new(2, 0, 0).unwrap())
+        );
+    }
+}
+
+#[test]
+fn transition_rule_finds_last_weekday_of_month() {
+    // The EU rule: last Sunday in March and last Sunday in October, at
+    // 01:00 UTC (kept here as a local time for the purpose of the test).
+    let starts = TransitionRule::new(
+        3,
+        WeekdayOccurrence::Last,
+        Weekday::Sunday,
+        Time::new(1, 0, 0).unwrap(),
+    )
+    .unwrap();
+    let ends = TransitionRule::new(
+        10,
+        WeekdayOccurrence::Last,
+        Weekday::Sunday,
+        Time::new(1, 0, 0).unwrap(),
+    )
+    .unwrap();
+
+    let cases: &[(i32, (i32, u8, u8), (i32, u8, u8))] = &[
+        (2023, (2023, 3, 26), (2023, 10, 29)),
+        (2024, (2024, 3, 31), (2024, 10, 27)),
+        // October 2022 has five Sundays; "last" must skip the fourth.
+        (2022, (2022, 3, 27), (2022, 10, 30)),
+    ];
+    for &(year, expected_start, expected_end) in cases {
+        let (sy, sm, sd) = expected_start;
+        let (ey, em, ed) = expected_end;
+        assert_eq!(starts.date_in_year(year), Date::new(sy, sm, sd).unwrap());
+        assert_eq!(ends.date_in_year(year), Date::new(ey, em, ed).unwrap());
+    }
+}
+
+#[test]
+fn transition_rule_rejects_bad_month() {
+    let time = Time::new(2, 0, 0).unwrap();
+    assert!(TransitionRule::new(0, WeekdayOccurrence::First, Weekday::Sunday, time).is_err());
+    assert!(TransitionRule::new(13, WeekdayOccurrence::First, Weekday::Sunday, time).is_err());
+    assert!(TransitionRule::new(3, WeekdayOccurrence::Second, Weekday::Sunday, time).is_ok());
 }
 
 #[test]

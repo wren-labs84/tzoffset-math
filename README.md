@@ -53,14 +53,18 @@ assert_eq!(day_before, Date::new(1900, 2, 28).unwrap()); // 1900 was not a leap 
   half-hour and 45-minute offsets are exact.
 - `CivilDateTime` — a date and time together, with conversion to and
   from Unix seconds either as UTC directly or through a `UtcOffset`.
+- `Weekday` and `Date::weekday` — the day of the week a date falls on.
+- `TransitionRule` — a DST-style rule ("second Sunday in March at
+  02:00 local", "last Sunday in October") resolved to a concrete date
+  for a given year.
 
 ## Roadmap
 
-Daylight saving transition rules are the next real piece of work: a
-way to describe when a place's offset changes (e.g. "second Sunday in
-March at 02:00 local") and correct handling of the resulting "gap"
-(spring forward, a local time that never happens) and "fold" (fall
-back, a local time that happens twice).
+`TransitionRule` describes *when* a rule fires but doesn't yet turn
+that local reading into a UTC instant. That's the next piece: handling
+the "gap" a spring-forward transition opens (a local time that never
+happens) and the "fold" a fall-back transition creates (a local time
+that happens twice).
 
 ## License
 

@@ -15,4 +15,7 @@ mod transition;
 
 pub use civil::{CivilDateTime, OffsetError, Time, TimeError, UtcOffset};
 pub use date::{days_in_month, is_leap_year, Date, DateError};
-pub use transition::{TransitionRule, TransitionRuleError, Weekday, WeekdayOccurrence};
+pub use transition::{
+    LocalResult, OffsetTransition, TransitionRule, TransitionRuleError, Weekday,
+    WeekdayOccurrence,
+};

@@ -57,14 +57,21 @@ assert_eq!(day_before, Date::new(1900, 2, 28).unwrap()); // 1900 was not a leap 
 - `TransitionRule` — a DST-style rule ("second Sunday in March at
   02:00 local", "last Sunday in October") resolved to a concrete date
   for a given year.
+- `OffsetTransition` and `LocalResult` — pair a `TransitionRule` with
+  the offsets on either side of it and resolve a local wall-clock
+  reading to the UTC instant(s) it names, including the spring-forward
+  gap (a local time that never happens) and the fall-back fold (a
+  local time that happens twice).
 
 ## Roadmap
 
-`TransitionRule` describes *when* a rule fires but doesn't yet turn
-that local reading into a UTC instant. That's the next piece: handling
-the "gap" a spring-forward transition opens (a local time that never
-happens) and the "fold" a fall-back transition creates (a local time
-that happens twice).
+`OffsetTransition` resolves a reading against one transition at a
+time; it doesn't yet know how to pick the right transition out of a
+full year (spring-forward rule, fall-back rule, and the two offsets
+together) on its own. Next up: ISO 8601 duration and weekday helpers,
+a table of common named offsets as constants, wider property testing
+of date round trips, and documenting the supported year range and
+overflow behavior.
 
 ## License
 

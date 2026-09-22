@@ -3,8 +3,8 @@
 //! hours alone, sign errors on negative offsets) tends to get wrong.
 
 use tzoffset_math::{
-    days_in_month, is_leap_year, CivilDateTime, Date, Time, TransitionRule, UtcOffset, Weekday,
-    WeekdayOccurrence,
+    days_in_month, is_leap_year, CivilDateTime, Date, LocalResult, OffsetTransition, Time,
+    TransitionRule, UtcOffset, Weekday, WeekdayOccurrence,
 };
 
 #[test]
@@ -240,6 +240,114 @@ fn transition_rule_rejects_bad_month() {
     assert!(TransitionRule::new(0, WeekdayOccurrence::First, Weekday::Sunday, time).is_err());
     assert!(TransitionRule::new(13, WeekdayOccurrence::First, Weekday::Sunday, time).is_err());
     assert!(TransitionRule::new(3, WeekdayOccurrence::Second, Weekday::Sunday, time).is_ok());
+}
+
+// US Central time: CST is UTC-6, CDT is UTC-5.
+fn us_central_spring_forward() -> OffsetTransition {
+    let rule = TransitionRule::new(
+        3,
+        WeekdayOccurrence::Second,
+        Weekday::Sunday,
+        Time::new(2, 0, 0).unwrap(),
+    )
+    .unwrap();
+    OffsetTransition::new(
+        rule,
+        UtcOffset::from_hm(-6, 0).unwrap(),
+        UtcOffset::from_hm(-5, 0).unwrap(),
+    )
+}
+
+fn us_central_fall_back() -> OffsetTransition {
+    let rule = TransitionRule::new(
+        11,
+        WeekdayOccurrence::First,
+        Weekday::Sunday,
+        Time::new(2, 0, 0).unwrap(),
+    )
+    .unwrap();
+    OffsetTransition::new(
+        rule,
+        UtcOffset::from_hm(-5, 0).unwrap(),
+        UtcOffset::from_hm(-6, 0).unwrap(),
+    )
+}
+
+#[test]
+fn spring_forward_gap_swallows_the_skipped_hour() {
+    // 2024-03-10: US clocks jump from 02:00 CST straight to 03:00 CDT.
+    let transition = us_central_spring_forward();
+    let date = Date::new(2024, 3, 10).unwrap();
+
+    // 02:30 never happens.
+    let skipped = CivilDateTime::new(date, Time::new(2, 30, 0).unwrap());
+    match transition.resolve(skipped, 2024) {
+        LocalResult::Gap {
+            transition_utc,
+            gap_seconds,
+        } => {
+            assert_eq!(gap_seconds, 3600);
+            assert_eq!(
+                transition_utc,
+                CivilDateTime::new(date, Time::new(2, 0, 0).unwrap())
+                    .to_unix_seconds_with_offset(UtcOffset::from_hm(-6, 0).unwrap())
+            );
+        }
+        other => panic!("expected Gap, got {other:?}"),
+    }
+
+    // 01:30, just before the jump, is still ordinary CST.
+    let before = CivilDateTime::new(date, Time::new(1, 30, 0).unwrap());
+    assert_eq!(
+        transition.resolve(before, 2024),
+        LocalResult::Single(before.to_unix_seconds_with_offset(UtcOffset::from_hm(-6, 0).unwrap()))
+    );
+
+    // 03:30, just after the jump, is already CDT.
+    let after = CivilDateTime::new(date, Time::new(3, 30, 0).unwrap());
+    assert_eq!(
+        transition.resolve(after, 2024),
+        LocalResult::Single(after.to_unix_seconds_with_offset(UtcOffset::from_hm(-5, 0).unwrap()))
+    );
+}
+
+#[test]
+fn fall_back_fold_produces_two_valid_instants() {
+    // 2024-11-03: US clocks fall from 02:00 CDT back to 01:00 CST, so
+    // every reading between 01:00 and 02:00 happens twice.
+    let transition = us_central_fall_back();
+    let date = Date::new(2024, 11, 3).unwrap();
+
+    let folded = CivilDateTime::new(date, Time::new(1, 30, 0).unwrap());
+    match transition.resolve(folded, 2024) {
+        LocalResult::Ambiguous { earlier, later } => {
+            assert_eq!(
+                earlier,
+                folded.to_unix_seconds_with_offset(UtcOffset::from_hm(-5, 0).unwrap())
+            );
+            assert_eq!(
+                later,
+                folded.to_unix_seconds_with_offset(UtcOffset::from_hm(-6, 0).unwrap())
+            );
+            assert!(earlier < later);
+            assert_eq!(later - earlier, 3600);
+        }
+        other => panic!("expected Ambiguous, got {other:?}"),
+    }
+
+    // 00:30, before the fold, only ever happened under CDT.
+    let before = CivilDateTime::new(date, Time::new(0, 30, 0).unwrap());
+    assert_eq!(
+        transition.resolve(before, 2024),
+        LocalResult::Single(before.to_unix_seconds_with_offset(UtcOffset::from_hm(-5, 0).unwrap()))
+    );
+
+    // 02:30, after the fold, is unambiguous CST.
+    let after = CivilDateTime::new(date, Time::new(2, 30, 0).unwrap());
+    assert_eq!(
+        transition.resolve(after, 2024),
+        LocalResult::Single(after.to_unix_seconds_with_offset(UtcOffset::from_hm(-6, 0).unwrap()))
+    );
 }
 
 #[test]

@@ -4,13 +4,14 @@
 //! March at 02:00"), or "the last weekday of some month" for the older
 //! European-style rules.
 //!
-//! This module only resolves a rule to the calendar date and wall-clock
-//! reading it names for a given year. Turning that local reading into
-//! a UTC instant — including the gap it opens on the spring-forward
-//! side and the fold it creates on the fall-back side — is separate,
-//! later work.
+//! [`TransitionRule`] resolves a rule to the calendar date and wall-clock
+//! reading it names for a given year. [`OffsetTransition`] pairs a rule
+//! with the offsets on either side of it and turns a local reading into
+//! the UTC instant(s) it refers to, including the gap a spring-forward
+//! jump opens (a local time that never happens) and the fold a
+//! fall-back jump creates (a local time that happens twice).
 
-use crate::civil::{CivilDateTime, Time};
+use crate::civil::{CivilDateTime, Time, UtcOffset};
 use crate::date::{days_in_month, Date};
 
 /// Day of the week. `Monday` is first to match ISO 8601 ordering.
@@ -123,4 +124,87 @@ impl TransitionRule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitionRuleError {
     MonthOutOfRange(u8),
+}
+
+/// A single change of UTC offset at the moment named by a
+/// [`TransitionRule`], e.g. "clocks go from PST to PDT at 02:00 PST" or
+/// the reverse. The rule's local time is always read using
+/// `offset_before` — that's the convention real DST laws use: the wall
+/// clock named in the law hasn't changed yet at the instant it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OffsetTransition {
+    pub rule: TransitionRule,
+    pub offset_before: UtcOffset,
+    pub offset_after: UtcOffset,
+}
+
+/// What a local wall-clock reading means once a nearby offset change is
+/// taken into account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalResult {
+    /// The reading names a moment that never happened: the clocks
+    /// jumped past it. `transition_utc` is the instant (Unix seconds)
+    /// the jump occurred; `gap_seconds` is how far the clock jumped, so
+    /// a caller that wants a best-effort instant instead of an error can
+    /// shift the reading by that much.
+    Gap { transition_utc: i64, gap_seconds: i32 },
+    /// The reading happened exactly once, at this UTC instant.
+    Single(i64),
+    /// The reading happened twice, once under each offset. `earlier` is
+    /// always the smaller (earlier) UTC instant of the two.
+    Ambiguous { earlier: i64, later: i64 },
+}
+
+impl OffsetTransition {
+    pub fn new(rule: TransitionRule, offset_before: UtcOffset, offset_after: UtcOffset) -> Self {
+        OffsetTransition {
+            rule,
+            offset_before,
+            offset_after,
+        }
+    }
+
+    /// The UTC instant, in Unix seconds, at which the offset changes in
+    /// `year`.
+    pub fn instant_in_year(self, year: i32) -> i64 {
+        self.rule
+            .datetime_in_year(year)
+            .to_unix_seconds_with_offset(self.offset_before)
+    }
+
+    /// Resolves a local wall-clock reading against this transition for
+    /// `year`, accounting for the gap a forward jump opens or the fold a
+    /// backward jump creates.
+    pub fn resolve(self, local: CivilDateTime, year: i32) -> LocalResult {
+        let shift =
+            self.offset_after.total_seconds() as i64 - self.offset_before.total_seconds() as i64;
+        let wall = local.to_unix_seconds();
+        let named_wall = self.rule.datetime_in_year(year).to_unix_seconds();
+        // The named wall-clock reading is where the change happens; the
+        // affected interval sits after it for a forward jump (the gap)
+        // and before it for a backward jump (the fold).
+        let (lo, hi) = if shift >= 0 {
+            (named_wall, named_wall + shift)
+        } else {
+            (named_wall + shift, named_wall)
+        };
+
+        if wall < lo {
+            LocalResult::Single(local.to_unix_seconds_with_offset(self.offset_before))
+        } else if wall < hi {
+            if shift > 0 {
+                LocalResult::Gap {
+                    transition_utc: self.instant_in_year(year),
+                    gap_seconds: shift as i32,
+                }
+            } else {
+                LocalResult::Ambiguous {
+                    earlier: local.to_unix_seconds_with_offset(self.offset_before),
+                    later: local.to_unix_seconds_with_offset(self.offset_after),
+                }
+            }
+        } else {
+            LocalResult::Single(local.to_unix_seconds_with_offset(self.offset_after))
+        }
+    }
 }
